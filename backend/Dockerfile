@@ -13,12 +13,16 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copie des fichiers nécessaires depuis le builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
+# npm n'est pas nécessaire à l'exécution : on le retire (surface d'attaque + CVE embarquées)
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
+USER node
 EXPOSE 4000
 CMD ["node", "dist/server.js"]
