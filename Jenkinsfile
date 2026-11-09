@@ -15,7 +15,7 @@ pipeline {
     }
 
     environment {
-        DOCKERHUB_USER = 'leobessin'   // à adapter : compte Docker Hub
+        DOCKERHUB_USER = '00h37'   // identifiant Docker Hub : le nom d'image doit commencer par lui
         IMAGE_NAME     = "${DOCKERHUB_USER}/souverainrecrut-backend"
         // Seuils Trivy : le build échoue si une vulnérabilité HIGH/CRITICAL corrigeable est trouvée
         TRIVY_SEVERITY = 'HIGH,CRITICAL'
