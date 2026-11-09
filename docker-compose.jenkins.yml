@@ -4,6 +4,7 @@
 services:
   jenkins:
     build: ./jenkins
+    dns: [1.1.1.1, 9.9.9.9]   # évite un DNS périmé quand le portable change de réseau
     user: root   # accès au socket Docker de l'hôte (environnement de TP uniquement)
     ports:
       - "8080:8080"

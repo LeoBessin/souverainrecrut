@@ -111,7 +111,10 @@ pipeline {
                                                   usernameVariable: 'DH_USER',
                                                   passwordVariable: 'DH_TOKEN')]) {
                     sh '''
-                        echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin
+                        # Nettoie les caractères parasites du copier-coller (espace, retour ligne) ;
+                        # les identifiants Docker Hub sont en minuscules.
+                        DH_USER_CLEAN=$(printf '%s' "$DH_USER" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                        printf '%s' "$DH_TOKEN" | tr -d '[:space:]' | docker login -u "$DH_USER_CLEAN" --password-stdin
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker push ${IMAGE_NAME}:latest
                     '''
