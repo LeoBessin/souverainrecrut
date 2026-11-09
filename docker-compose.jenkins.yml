@@ -1,0 +1,22 @@
+# Jenkins local (CI)
+#   docker compose -f docker-compose.jenkins.yml up -d --build   -> http://localhost:8080
+#   mot de passe initial : docker compose -f docker-compose.jenkins.yml exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+services:
+  jenkins:
+    build: ./jenkins
+    user: root   # accès au socket Docker de l'hôte (environnement de TP uniquement)
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [default, sonar]
+
+networks:
+  sonar:
+    name: souverainrecrut_default   # réseau du compose SonarQube : Jenkins joint http://sonarqube:9000
+    external: true
+
+volumes:
+  jenkins_home:

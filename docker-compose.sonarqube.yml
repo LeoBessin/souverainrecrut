@@ -1,0 +1,50 @@
+# SonarQube local (analyse qualité du code)
+#   docker compose -f docker-compose.sonarqube.yml up -d          -> serveur sur http://localhost:9000 (admin / admin)
+#   SONAR_TOKEN=xxx docker compose -f docker-compose.sonarqube.yml run --rm scanner   -> lance l'analyse
+services:
+  sonarqube:
+    image: sonarqube:community
+    depends_on:
+      sonar-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+
+  sonar-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - sonar_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar -d sonar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  scanner:
+    image: sonarsource/sonar-scanner-cli:latest
+    profiles: ["scan"]
+    depends_on:
+      - sonarqube
+    environment:
+      SONAR_HOST_URL: http://sonarqube:9000
+      SONAR_TOKEN: ${SONAR_TOKEN:-}
+    volumes:
+      - .:/usr/src
+
+volumes:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  sonar_db_data:
