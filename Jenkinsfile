@@ -111,11 +111,17 @@ pipeline {
                                                   usernameVariable: 'DH_USER',
                                                   passwordVariable: 'DH_TOKEN')]) {
                     sh '''
-                        # Nettoie les caractères parasites du copier-coller (espace, retour ligne).
+                        # Ne garde que les caractères ASCII imprimables : élimine espaces, retours ligne
+                        # et caractères invisibles (Unicode) collés avec le jeton.
                         # Le login Docker Hub est sensible à la casse (ex. LeoBessin) ;
                         # seul le nom d'image (IMAGE_NAME) doit être en minuscules.
-                        DH_USER_CLEAN=$(printf '%s' "$DH_USER" | tr -d '[:space:]')
-                        printf '%s' "$DH_TOKEN" | tr -d '[:space:]' | docker login -u "$DH_USER_CLEAN" --password-stdin
+                        export LC_ALL=C
+                        DH_USER_CLEAN=$(printf '%s' "$DH_USER" | tr -cd '[:graph:]')
+                        DH_TOKEN_CLEAN=$(printf '%s' "$DH_TOKEN" | tr -cd '[:graph:]')
+                        # Diagnostic sans fuite du secret : longueur et préfixe attendu d'un PAT
+                        case "$DH_TOKEN_CLEAN" in dckr_pat_*) PAT_PREFIX=oui ;; *) PAT_PREFIX=non ;; esac
+                        echo "Docker Hub : utilisateur=$DH_USER_CLEAN, longueur_jeton=${#DH_TOKEN_CLEAN} (brut ${#DH_TOKEN}), prefixe_dckr_pat_=$PAT_PREFIX"
+                        printf '%s' "$DH_TOKEN_CLEAN" | docker login -u "$DH_USER_CLEAN" --password-stdin
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker push ${IMAGE_NAME}:latest
                     '''
