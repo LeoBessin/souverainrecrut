@@ -113,10 +113,10 @@ pipeline {
                     sh '''
                         # Ne garde que les caractères ASCII imprimables : élimine espaces, retours ligne
                         # et caractères invisibles (Unicode) collés avec le jeton.
-                        # Le login Docker Hub est sensible à la casse (ex. LeoBessin) ;
-                        # seul le nom d'image (IMAGE_NAME) doit être en minuscules.
+                        # L'API d'authentification Docker Hub refuse les majuscules dans le nom
+                        # d'utilisateur ("malformed HTTP Authorization header") : on force les minuscules.
                         export LC_ALL=C
-                        DH_USER_CLEAN=$(printf '%s' "$DH_USER" | tr -cd '[:graph:]')
+                        DH_USER_CLEAN=$(printf '%s' "$DH_USER" | tr -cd '[:graph:]' | tr '[:upper:]' '[:lower:]')
                         DH_TOKEN_CLEAN=$(printf '%s' "$DH_TOKEN" | tr -cd '[:graph:]')
                         # Diagnostic sans fuite du secret : longueur et préfixe attendu d'un PAT
                         case "$DH_TOKEN_CLEAN" in dckr_pat_*) PAT_PREFIX=oui ;; *) PAT_PREFIX=non ;; esac
