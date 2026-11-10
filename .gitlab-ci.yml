@@ -1,0 +1,71 @@
+# Pipeline de déploiement Backend SouverainRecrut (cahier des charges §5.3)
+# L'image est construite par Jenkins et publiée sur Docker Hub : ici on ne reconstruit RIEN.
+#
+# Variables CI/CD à définir (Settings > CI/CD > Variables, masquées/protégées) :
+#   DOCKERHUB_USER, DOCKERHUB_TOKEN   accès Docker Hub (lecture suffisante)
+#   SSH_HOST, SSH_USER                serveur cible
+#   SSH_PRIVATE_KEY                   (type File) clé privée de déploiement
+#   POSTGRES_PASSWORD, JWT_SECRET     secrets applicatifs
+#   FRONTEND_URL                      origine autorisée par le CORS
+#   IMAGE_TAG                         tag à déployer, ex. 0.1.0-abc1234 (à saisir au lancement)
+
+stages: [validate, deploy, verify]
+
+default:
+  image: python:3.12-alpine
+  before_script:
+    - apk add --no-cache openssh-client curl >/dev/null
+    - pip install --quiet ansible-core==2.17.* && ansible-galaxy collection install -r deploiement/ansible/requirements.yml >/dev/null
+    - chmod 600 "$SSH_PRIVATE_KEY"
+    - mkdir -p ~/.ssh && ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+    # Inventaire éphémère construit depuis les variables CI : aucune IP ni clé dans Git
+    - printf '[app]\n%s ansible_user=%s ansible_ssh_private_key_file=%s\n' "$SSH_HOST" "$SSH_USER" "$SSH_PRIVATE_KEY" > /tmp/hosts.ini
+
+variables:
+  ANSIBLE_FORCE_COLOR: "true"
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+
+validate:tag:
+  stage: validate
+  script:
+    - |
+      case "$IMAGE_TAG" in
+        ""|latest) echo "IMAGE_TAG obligatoire et différent de latest"; exit 1 ;;
+      esac
+      echo "$IMAGE_TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{7,}$' || { echo "Format attendu : X.Y.Z-<commit>"; exit 1; }
+    # Le tag doit exister sur Docker Hub (API publique)
+    - 'curl -fsS "https://hub.docker.com/v2/repositories/${DOCKERHUB_USER}/souverainrecrut-backend/tags/${IMAGE_TAG}" -o /dev/null || { echo "Tag introuvable sur Docker Hub"; exit 1; }'
+    - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/deploy.yml --syntax-check
+    - ansible -i /tmp/hosts.ini app -m ping
+
+deploy:production:
+  stage: deploy
+  environment:
+    name: production
+  when: manual            # approbation manuelle avant la production (§5.3)
+  resource_group: production
+  needs: [validate:tag]
+  script:
+    - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/playbook.yml --tags prepare
+    - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/deploy.yml -e image_tag="$IMAGE_TAG"
+
+verify:production:
+  stage: verify
+  needs: [deploy:production]
+  script:
+    - ssh -i "$SSH_PRIVATE_KEY" "$SSH_USER@$SSH_HOST" "cd /opt/souverainrecrut && docker compose ps"
+    - ssh -i "$SSH_PRIVATE_KEY" "$SSH_USER@$SSH_HOST" "curl -fsS http://127.0.0.1:4000/v1/health"
+
+# Retour arrière : relancer avec ROLLBACK_TAG=<tag précédent> (voir docs, procédure de rollback)
+rollback:production:
+  stage: deploy
+  environment:
+    name: production
+  when: manual
+  resource_group: production
+  needs: []
+  variables:
+    ROLLBACK_TAG: ""
+  script:
+    - test -n "$ROLLBACK_TAG" || { echo "Renseigner ROLLBACK_TAG"; exit 1; }
+    - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/deploy.yml -e image_tag="$ROLLBACK_TAG"

@@ -1,0 +1,5 @@
+# Usage local uniquement. Copier en vault.yml puis : ansible-vault encrypt group_vars/all/vault.yml
+# En CI, ces valeurs viennent des variables GitLab masquées (pas de Vault nécessaire).
+vault_postgres_password: "change-me"
+vault_jwt_secret: "change-me"
+vault_dockerhub_token: "dckr_pat_xxx"

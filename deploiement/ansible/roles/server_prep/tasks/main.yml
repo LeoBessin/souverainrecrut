@@ -1,0 +1,78 @@
+- name: Mettre à jour le cache apt et les paquets
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: safe
+    cache_valid_time: 3600
+
+- name: Installer les dépendances
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gnupg, jq, python3-docker]
+    state: present
+
+# Le VPS exécute déjà Coolify, donc Docker : on ne touche à Docker que s'il manque.
+- name: Vérifier la présence de Docker
+  ansible.builtin.command: docker --version
+  register: docker_check
+  changed_when: false
+  failed_when: false
+
+- name: Installer Docker Engine + plugin Compose (dépôt officiel) si absent
+  when: docker_check.rc != 0
+  block:
+    - name: Créer le dossier des clés apt
+      ansible.builtin.file: {path: /etc/apt/keyrings, state: directory, mode: "0755"}
+
+    - name: Ajouter la clé GPG Docker
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Ajouter le dépôt Docker
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: deb
+        uris: https://download.docker.com/linux/{{ ansible_distribution | lower }}
+        suites: "{{ ansible_distribution_release }}"
+        components: stable
+        architectures: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+        signed_by: /etc/apt/keyrings/docker.asc
+
+    - name: Installer Docker Engine
+      ansible.builtin.apt:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin]
+        state: present
+        update_cache: true
+
+- name: S'assurer que le plugin Compose est présent
+  ansible.builtin.apt:
+    name: docker-compose-plugin
+    state: present
+  when: docker_check.rc != 0
+
+- name: Activer et démarrer Docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Ajouter l'utilisateur SSH au groupe docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+
+- name: Créer le répertoire de déploiement
+  ansible.builtin.file:
+    path: "{{ deploy_dir }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    mode: "0750"
+
+- name: Vérifier le fonctionnement de Docker
+  ansible.builtin.command: docker info
+  changed_when: false
+
+- name: Vérifier le plugin Docker Compose
+  ansible.builtin.command: docker compose version
+  changed_when: false

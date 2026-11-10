@@ -1,0 +1,66 @@
+- name: Exiger un tag d'image explicite (pas de latest)
+  ansible.builtin.assert:
+    that:
+      - image_tag | length > 0
+      - image_tag != 'latest'
+    fail_msg: "Fournir -e image_tag=<version>-<commit>"
+
+- name: Copier docker-compose.yml
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../deployment/docker-compose.yml"
+    dest: "{{ deploy_dir }}/docker-compose.yml"
+    mode: "0640"
+
+- name: Copier les migrations Prisma
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../backend/prisma/"
+    dest: "{{ deploy_dir }}/prisma/"
+    mode: preserve
+
+- name: Mémoriser le tag précédent pour le rollback
+  ansible.builtin.shell: "grep '^IMAGE_TAG=' {{ deploy_dir }}/.env | cut -d= -f2 > {{ deploy_dir }}/.previous_tag || true"
+  changed_when: false
+
+- name: Générer le .env (secrets issus du Vault)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ deploy_dir }}/.env"
+    mode: "0600"
+  no_log: true
+
+- name: Vérifier que les secrets sont fournis
+  ansible.builtin.assert:
+    that:
+      - postgres_password | length > 0
+      - jwt_secret | length > 0
+      - dockerhub_token | length > 0
+    quiet: true
+  no_log: true
+
+- name: Connexion à Docker Hub
+  community.docker.docker_login:
+    username: "{{ docker_hub_user }}"
+    password: "{{ dockerhub_token }}"
+  no_log: true
+
+- name: Tirer l'image et démarrer les services
+  community.docker.docker_compose_v2:
+    project_src: "{{ deploy_dir }}"
+    pull: always
+    state: present
+    remove_orphans: true
+
+- name: Attendre que l'API réponde
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/{{ api_version }}/health"
+    status_code: 200
+  register: health
+  retries: 15
+  delay: 4
+  until: health.status == 200
+
+- name: Afficher l'état des conteneurs
+  ansible.builtin.command: docker compose ps
+  args:
+    chdir: "{{ deploy_dir }}"
+  changed_when: false

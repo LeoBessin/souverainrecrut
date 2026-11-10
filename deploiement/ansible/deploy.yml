@@ -1,0 +1,8 @@
+# Déploiement applicatif : tire l'image Docker Hub et démarre Compose (§5.1/5.2)
+# Usage : ansible-playbook deploy.yml -e image_tag=0.1.0-abc1234
+- name: Déployer le backend
+  hosts: app
+  become: true
+  roles:
+    - role: app_deploy
+      tags: [deploy]

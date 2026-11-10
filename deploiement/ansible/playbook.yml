@@ -1,0 +1,8 @@
+# Préparation du serveur (cahier des charges §4.3)
+# Usage : ansible-playbook playbook.yml --tags prepare
+- name: Préparer le serveur
+  hosts: app
+  become: true
+  roles:
+    - role: server_prep
+      tags: [prepare]

@@ -1,0 +1,68 @@
+# Déploiement Backend + PostgreSQL (cahier des charges §5.2)
+# L'image est tirée de Docker Hub : aucun build sur le serveur.
+name: souverainrecrut
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Migrations Prisma : exécutées une seule fois par déploiement, avant l'API.
+  # L'image de prod ne contient pas la CLI Prisma (devDependency) : on utilise une
+  # image Node jetable avec le dossier prisma/ copié depuis le dépôt.
+  migrate:
+    image: node:22-alpine
+    working_dir: /work
+    command: ["npx", "--yes", "prisma@6.16.2", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - ./prisma:/work/prisma:ro
+    networks: [backend]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: ${IMAGE_NAME}:${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      API_VERSION: ${API_VERSION:-v1}
+    ports:
+      - "${API_PORT:-4000}:4000"
+    networks: [backend]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/${API_VERSION:-v1}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+networks:
+  backend:
+
+volumes:
+  pgdata:

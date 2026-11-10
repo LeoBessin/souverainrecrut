@@ -1,0 +1,15 @@
+deploy_dir: /opt/souverainrecrut
+docker_hub_user: "{{ lookup('env', 'DOCKERHUB_USER') | default('00h37', true) }}"
+image_name: "{{ docker_hub_user }}/souverainrecrut-backend"
+# Tag de l'image à déployer, obligatoire : -e image_tag=0.1.0-abc1234
+image_tag: "{{ lookup('env', 'IMAGE_TAG') }}"
+api_port: 4000
+api_version: v1
+frontend_url: "{{ lookup('env', 'FRONTEND_URL') | default('https://example.com', true) }}"
+postgres_db: souverainrecrut
+postgres_user: souverainrecrut
+
+# Secrets : Ansible Vault en local (vault_*), variables CI/CD masquées dans GitLab.
+postgres_password: "{{ vault_postgres_password | default(lookup('env', 'POSTGRES_PASSWORD')) }}"
+jwt_secret: "{{ vault_jwt_secret | default(lookup('env', 'JWT_SECRET')) }}"
+dockerhub_token: "{{ vault_dockerhub_token | default(lookup('env', 'DOCKERHUB_TOKEN')) }}"

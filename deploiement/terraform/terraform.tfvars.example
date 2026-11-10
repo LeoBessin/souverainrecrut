@@ -1,0 +1,5 @@
+# Copier en terraform.tfvars (ignoré par Git) et adapter.
+server_host                = "203.0.113.10"
+bootstrap_user             = "ubuntu"
+bootstrap_private_key_path = "~/.ssh/id_ed25519"
+deploy_user                = "deploy"
