@@ -494,12 +494,11 @@ HTTP 401
 
 **GitLab CI** – pipeline : `validate:tag` ✔ → `deploy:production` (manuel) ✔ → `verify:production` ✔ ; `rollback:production` disponible (manuel).
 
-### Captures à fournir (journée 2)
+**Captures GitLab** :
 
-Les sorties de commandes sont intégrées ci-dessus (§11.10). Seules les captures de l'interface GitLab restent à fournir :
+![Variables CI/CD du projet GitLab : secrets masqués, clé SSH de type File](captures/14-gitlab-variables.png)
 
-- `14-gitlab-variables.png` : variables CI/CD (valeurs masquées)
-- `15-gitlab-pipeline.png` : pipeline avec le job manuel de production
+![Pipelines GitLab : validation, déploiement manuel et vérification réussis](captures/15-gitlab-pipeline.png)
 
 ---
 
