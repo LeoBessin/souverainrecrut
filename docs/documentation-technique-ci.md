@@ -378,7 +378,8 @@ Variables CI/CD à créer (masquées, `SSH_PRIVATE_KEY` de type File) : `DOCKERH
 | `playbook.yml --tags prepare` sur le VPS (1re exécution `changed=4`, 2e exécution `changed=0` : idempotent) | Fait |
 | `deploy.yml` : image `00h37/souverainrecrut-backend:1.0.0-f1f3177` déployée, `db` et `api` *healthy*, migration Prisma appliquée, `/v1/health` et `/v1/ready` = 200, endpoints protégés = 401 | Fait |
 | Projet GitLab privé `leo.bessin/souverainrecrut-deploiement`, variables CI/CD créées, `validate:tag` au vert | Fait |
-| Job `deploy:production` (approbation manuelle), rollback testé | À faire |
+| Job `deploy:production` (approbation manuelle) et `verify:production` au vert | Fait |
+| Rollback testé (nécessite une 2e image publiée) | À faire |
 | Procédure de rollback testée | À faire |
 
 ### 11.8 Déploiement réalisé (10/11/2026)
@@ -389,14 +390,116 @@ Déploiement manuel depuis le poste, avec les secrets applicatifs générés al�
 
 Projet privé créé avec `glab`, branche `Dev` poussée vers `main` (remote `gitlab`). Variables : `SSH_PRIVATE_KEY` (type File), `POSTGRES_PASSWORD` et `JWT_SECRET` (masquées), `SSH_HOST`, `SSH_USER`, `DOCKERHUB_USER`, `FRONTEND_URL`, `IMAGE_TAG`. Elles ne sont pas « protected » car `main` n'est pas protégée ; à activer avec la protection de branche pour un usage réel. Piège rencontré : une variable File sans retour à la ligne final fait échouer OpenSSH (`error in libcrypto`) ; la clé a été renvoyée via l'API avec son `\n` final.
 
+### 11.10 Preuves d'exécution (10/11/2026)
+
+**Terraform** – premier `plan`/`apply` (extraits), puis `plan` de contrôle :
+
+```text
+Plan: 4 to add, 0 to change, 0 to destroy.
+...
+Apply complete! Resources: 4 added, 0 changed, 0 destroyed.
+```
+
+```text
+Success! The configuration is valid.
+
+tls_private_key.deploy: Refreshing state... [id=a4d216605fc48a4c80c5ca245548ce98c0973368]
+terraform_data.bootstrap: Refreshing state... [id=784bee0f-31ec-c559-ca6b-1cddf05b9403]
+local_sensitive_file.deploy_private_key: Refreshing state... [id=003da3156d0d50b16167f2a96e4d7e3514e71ae8]
+local_file.ansible_inventory: Refreshing state... [id=a924a1b517b137210767e1b31c91ee8a7627939b]
+
+No changes. Your infrastructure matches the configuration.
+
+Terraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.
+```
+
+**Ansible** – ping SSH puis préparation du serveur (2e exécution, idempotente) :
+
+```text
+[WARNING]: Host '51.178.183.231' is using the discovered Python interpreter at '/usr/bin/python3.11', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.21/reference_appendices/interpreter_discovery.html for more information.
+51.178.183.231 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python3.11"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+PLAY [Préparer le serveur] *****************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host '51.178.183.231' is using the discovered Python interpreter at '/usr/bin/python3.11', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.21/reference_appendices/interpreter_discovery.html for more information.
+ok: [51.178.183.231]
+
+TASK [server_prep : Mettre à jour le cache apt et les paquets] *****************
+ok: [51.178.183.231]
+
+TASK [server_prep : Installer les dépendances] *********************************
+ok: [51.178.183.231]
+
+TASK [server_prep : Vérifier la présence de Docker] ****************************
+ok: [51.178.183.231]
+
+TASK [server_prep : Créer le dossier des clés apt] *****************************
+skipping: [51.178.183.231]
+
+TASK [server_prep : Ajouter la clé GPG Docker] *********************************
+skipping: [51.178.183.231]
+
+TASK [server_prep : Ajouter le dépôt Docker] ***********************************
+skipping: [51.178.183.231]
+
+TASK [server_prep : Installer Docker Engine] ***********************************
+skipping: [51.178.183.231]
+
+TASK [server_prep : S'assurer que le plugin Compose est présent] ***************
+skipping: [51.178.183.231]
+
+TASK [server_prep : Activer et démarrer Docker] ********************************
+ok: [51.178.183.231]
+
+TASK [server_prep : Ajouter l'utilisateur SSH au groupe docker] ****************
+ok: [51.178.183.231]
+
+TASK [server_prep : Créer le répertoire de déploiement] ************************
+ok: [51.178.183.231]
+
+TASK [server_prep : Vérifier le fonctionnement de Docker] **********************
+ok: [51.178.183.231]
+
+TASK [server_prep : Vérifier le plugin Docker Compose] *************************
+ok: [51.178.183.231]
+
+PLAY RECAP *********************************************************************
+51.178.183.231             : ok=9    changed=0    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0
+```
+
+**VPS** – état des services, migration et API (`docker compose ps`, `curl`) :
+
+```text
+SERVICE   IMAGE                                         STATUS                    PORTS
+api       00h37/souverainrecrut-backend:1.0.0-f1f3177   Up 15 minutes (healthy)   0.0.0.0:4000->4000/tcp, [::]:4000->4000/tcp
+db        postgres:16-alpine                            Up 16 minutes (healthy)   5432/tcp
+
+
+
+No pending migrations to apply.
+
+{"success":true,"data":{"status":"UP","timestamp":"2026-11-10T10:51:16.697Z","uptime":952.3013569,"environment":"production"}}
+HTTP 200
+ready HTTP 200
+{"success":false,"error":{"status":401,"message":"Authentification requise."}}
+HTTP 401
+```
+
+**GitLab CI** – pipeline : `validate:tag` ✔ → `deploy:production` (manuel) ✔ → `verify:production` ✔ ; `rollback:production` disponible (manuel).
+
 ### Captures à fournir (journée 2)
 
-- `12-terraform-plan.png` : `terraform plan` puis `apply`
-- `13-ansible-prepare.png` : récapitulatif de `playbook.yml`
+Les sorties de commandes sont intégrées ci-dessus (§11.10). Seules les captures de l'interface GitLab restent à fournir :
+
 - `14-gitlab-variables.png` : variables CI/CD (valeurs masquées)
 - `15-gitlab-pipeline.png` : pipeline avec le job manuel de production
-- `16-deploiement-vps.png` : `docker compose ps` sur le VPS
-- `17-api-health.png` : `curl /v1/health`
 
 ---
 
