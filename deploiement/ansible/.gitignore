@@ -2,3 +2,4 @@ inventories/prod/hosts.ini
 group_vars/all/vault.yml
 *.retry
 .vault_pass
+.deploy-secrets.env

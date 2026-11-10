@@ -376,8 +376,13 @@ Variables CI/CD à créer (masquées, `SSH_PRIVATE_KEY` de type File) : `DOCKERH
 | `terraform validate` (Terraform 1.17.1), `ansible-playbook --syntax-check` (ansible-core 2.21) | Réussis |
 | `terraform apply` sur le VPS (Debian 12, 4 ressources créées : utilisateur `deploy`, clé SSH, inventaire) | Fait |
 | `playbook.yml --tags prepare` sur le VPS (1re exécution `changed=4`, 2e exécution `changed=0` : idempotent) | Fait |
-| `deploy.yml` (déploiement réel), run GitLab | À faire |
+| `deploy.yml` : image `00h37/souverainrecrut-backend:1.0.0-f1f3177` déployée, `db` et `api` *healthy*, migration Prisma appliquée, `/v1/health` et `/v1/ready` = 200, endpoints protégés = 401 | Fait |
+| Run GitLab, rollback testé | À faire |
 | Procédure de rollback testée | À faire |
+
+### 11.8 Déploiement réalisé (10/11/2026)
+
+Déploiement manuel depuis le poste, avec les secrets applicatifs générés aléatoirement et conservés dans `ansible/.deploy-secrets.env` (hors Git), injectés par variables d'environnement. Le dépôt Docker Hub étant public, la connexion Docker Hub est conditionnelle au jeton (`dockerhub_token`). Deux correctifs issus du premier run : le `.env`, `docker-compose.yml` et `prisma/` appartiennent à l'utilisateur `deploy` (sinon `docker compose ps` échouait en CI). Le port 4000 est publié sur toutes les interfaces : à restreindre (pare-feu ou reverse proxy TLS) pour un usage réel.
 
 ### Captures à fournir (journée 2)
 
