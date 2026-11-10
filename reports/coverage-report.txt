@@ -1,0 +1,44 @@
+Rapport de tests et de couverture - SouverainRecrut Backend (cahier des charges §3.2)
+Commande : npm run test:coverage  (vitest run --coverage)
+Execute le : 2026-11-10T15:26:56+01:00
+Outils : Vitest + Supertest, couverture @vitest/coverage-v8
+
+ Test Files  4 passed (4)
+      Tests  52 passed (52)
+   Start at  15:26:11
+   Duration  1.26s (import 47%, tests 35%, transform 10%, worker 8%)
+
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------------|---------|----------|---------|---------|-------------------
+All files          |   97.18 |    81.15 |   97.64 |   97.18 |                   
+ src/config        |       0 |        0 |     100 |       0 |                   
+  env.ts           |       0 |        0 |     100 |       0 | 3-5               
+  prisma.ts        |       0 |      100 |     100 |       0 | 9                 
+ src/middlewares   |     100 |    93.75 |     100 |     100 |                   
+  ...middleware.ts |     100 |       50 |     100 |     100 | 10                
+ src/repositories  |   93.54 |      100 |      96 |   93.54 |                   
+  ...repository.ts |   85.71 |      100 |   83.33 |   85.71 | 92                
+  ...repository.ts |       0 |      100 |     100 |       0 | 10                
+ src/services      |   97.33 |      100 |   96.87 |   97.33 |                   
+  ...on.service.ts |   84.61 |      100 |   85.71 |   84.61 | 62-64             
+-------------------|---------|----------|---------|---------|-------------------
+
+=============================== Coverage summary ===============================
+Statements   : 97.18% ( 242/249 )
+Branches     : 81.15% ( 56/69 )
+Functions    : 97.64% ( 83/85 )
+Lines        : 97.18% ( 242/249 )
+================================================================================
+
+Fichiers de test :
+  backend/tests/api.test.ts          routes publiques, auth, CRUD (users, candidates, jobs, applications), unicite, dashboard
+  backend/tests/middlewares.test.ts  authentification JWT, controle des roles, gestion des erreurs
+  backend/tests/validators.test.ts   schemas de validation Zod
+  backend/tests/utils.test.ts        pagination, AppError, asyncHandler
+
+Exclusions de couverture (sonar-project.properties et vitest.config.ts) :
+  backend/src/server.ts, backend/src/docs/**, backend/src/types/**
+
+Donnees brutes pour SonarQube : reports/lcov.info (sonar.javascript.lcov.reportPaths)
