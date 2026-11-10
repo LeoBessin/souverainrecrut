@@ -5,9 +5,11 @@
 | **Module** | CI/CD – Mastère M2 (RNCP 40166) – Sup de Vinci Rennes |
 | **Projet** | Projet fil rouge SouverainRecrut – périmètre Backend uniquement |
 | **Auteur** | Léo Bessin |
-| **Date** | 9 novembre 2026 (journée 1 : intégration continue) |
-| **Dépôt** | `github.com/LeoBessin/souverainrecrut` (fork de `Santoudllo/souverainrecrut`), branche `Dev` |
-| **Périmètre couvert** | Cahier des charges, partie 3 (§3.1 à §3.6) |
+| **Dates** | 9 novembre 2026 (journée 1 : intégration continue), 10 novembre 2026 (journée 2 : déploiement) |
+| **Dépôt GitHub (code, CI Jenkins)** | [github.com/LeoBessin/souverainrecrut](https://github.com/LeoBessin/souverainrecrut) (fork de [Santoudllo/souverainrecrut](https://github.com/Santoudllo/souverainrecrut)), branche `Dev` |
+| **Dépôt GitLab (déploiement CD)** | [gitlab.com/leo.bessin/souverainrecrut-deploiement](https://gitlab.com/leo.bessin/souverainrecrut-deploiement) (projet privé), pipeline `.gitlab-ci.yml` |
+| **Image Docker** | [hub.docker.com/r/00h37/souverainrecrut-backend](https://hub.docker.com/r/00h37/souverainrecrut-backend) |
+| **Périmètre couvert** | Cahier des charges, partie 3 (§3.1 à §3.6, journée 1) et parties 4 et 5 (journée 2) |
 
 > Les captures sont dans `docs/captures/`. Celles encore à fournir sont listées en annexe.
 
@@ -388,7 +390,7 @@ Déploiement manuel depuis le poste, avec les secrets applicatifs générés al�
 
 ### 11.9 Projet GitLab
 
-Projet privé créé avec `glab`, branche `Dev` poussée vers `main` (remote `gitlab`). Variables : `SSH_PRIVATE_KEY` (type File), `POSTGRES_PASSWORD` et `JWT_SECRET` (masquées), `SSH_HOST`, `SSH_USER`, `DOCKERHUB_USER`, `FRONTEND_URL`, `IMAGE_TAG`. Elles ne sont pas « protected » car `main` n'est pas protégée ; à activer avec la protection de branche pour un usage réel. Piège rencontré : une variable File sans retour à la ligne final fait échouer OpenSSH (`error in libcrypto`) ; la clé a été renvoyée via l'API avec son `\n` final.
+Projet privé [souverainrecrut-deploiement](https://gitlab.com/leo.bessin/souverainrecrut-deploiement) créé avec `glab`, branche `Dev` du dépôt GitHub poussée vers `main` (remote `gitlab`). Le dépôt GitHub reste la source du code ; GitLab porte le pipeline de déploiement. Variables : `SSH_PRIVATE_KEY` (type File), `POSTGRES_PASSWORD` et `JWT_SECRET` (masquées), `SSH_HOST`, `SSH_USER`, `DOCKERHUB_USER`, `FRONTEND_URL`, `IMAGE_TAG`. Elles ne sont pas « protected » car `main` n'est pas protégée ; à activer avec la protection de branche pour un usage réel. Piège rencontré : une variable File sans retour à la ligne final fait échouer OpenSSH (`error in libcrypto`) ; la clé a été renvoyée via l'API avec son `\n` final.
 
 ### 11.10 Preuves d'exécution (10/11/2026)
 
