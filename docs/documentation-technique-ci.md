@@ -11,7 +11,17 @@
 | **Image Docker** | [hub.docker.com/r/00h37/souverainrecrut-backend](https://hub.docker.com/r/00h37/souverainrecrut-backend) |
 | **Périmètre couvert** | Cahier des charges, partie 3 (§3.1 à §3.6, journée 1) et parties 4 et 5 (journée 2) |
 
-> Les captures sont dans `docs/captures/`. Celles encore à fournir sont listées en annexe.
+**Documents du livrable** : [architecture de la chaîne CI/CD](architecture-cicd.md) ·
+[procédure de déploiement](procedure-deploiement.md) ·
+[procédure de rollback](procedure-rollback.md) ·
+[rapport final de conformité](rapport-final.md) ·
+[installation de Jenkins](jenkins.md) ·
+[dossier de déploiement](../deploiement/README.md)
+
+> Les captures d'écran sont dans `docs/captures/`, les rapports de tests, de couverture et
+> Trivy dans [`reports/`](../reports/). La numérotation des captures comporte des trous
+> (03, 12, 13) : ces captures n'ont pas été produites, les preuves correspondantes figurent
+> sous forme de sorties console au §11.11.
 
 ---
 
@@ -308,7 +318,8 @@ docker build -t 00h37/souverainrecrut-backend:local .
 | Terraform | Bootstrap du VPS : utilisateur `deploy`, clé SSH dédiée générée, sudo, inventaire Ansible | `deploiement/terraform/` |
 | Ansible | Préparation du serveur (Docker, Compose, répertoire) puis déploiement du Backend | `deploiement/ansible/` |
 | Docker Compose | Backend (image Docker Hub versionnée) + PostgreSQL + migrations Prisma | `deploiement/deployment/` |
-| GitLab CI/CD | Valide le tag, se connecte en SSH, exécute Ansible, vérifie l'API, permet le rollback | `.gitlab-ci.yml` |
+| GitLab CI/CD | Valide le tag, se connecte en SSH, exécute Ansible, vérifie l'API, déclenche le rollback | `.gitlab-ci.yml` |
+| Scripts shell | Smoke test post-déploiement et retour arrière vers une version antérieure | `deploiement/scripts/` |
 
 ```
 Poste local : terraform apply ─► utilisateur deploy + clé SSH + inventaire
@@ -316,9 +327,11 @@ Poste local : ansible-playbook playbook.yml ─► VPS prêt (une fois)
 
 Jenkins ─► Docker Hub (image X.Y.Z-commit)
 GitLab CI : validate:tag ─► [approbation manuelle] deploy:production ─► verify:production
-                                     │ SSH + Ansible
-                                     ▼
-              VPS : docker login ─► pull ─► migrate (Prisma) ─► up ─► /v1/health
+                                     │ SSH + Ansible                        │ smoke test
+                                     ▼                                      ▼ (échec)
+              VPS : docker login ─► pull ─► migrate (Prisma) ─► up ─► /v1/health      rollback:auto
+                                                                     │ (échec)        ─► version N-1
+                                                                     └─► rescue Ansible : version N-1
 ```
 
 ### 11.2 Prérequis poste local
@@ -343,7 +356,7 @@ terraform init && terraform validate && terraform plan && terraform apply
 ### 11.4 Ansible (§4.3)
 
 - `playbook.yml` (rôle `server_prep`, tag `prepare`) : mise à jour apt, dépendances, Docker Engine + plugin Compose depuis le dépôt officiel (si absents), service activé et démarré, répertoire `/opt/souverainrecrut`, contrôles `docker info` et `docker compose version`.
-- `deploy.yml` (rôle `app_deploy`) : refuse un tag vide ou `latest`, copie Compose et migrations Prisma, mémorise le tag précédent (`.previous_tag`), génère le `.env` (0600), login Docker Hub, `pull` + `up`, attente de `/v1/health`.
+- `deploy.yml` (rôle `app_deploy`) : refuse un tag vide ou `latest`, lit l'état des versions (`.deployed_tag`, `.previous_tag`), copie Compose et migrations Prisma, génère le `.env` (0600), login Docker Hub, `pull` + `up`, attente de `/v1/health`, puis mémorise la version déployée et son point de retour. Le déploiement est encadré par un `block` / `rescue` qui redéploie automatiquement la version précédente si l'API ne répond pas (§11.7).
 - Secrets : en local via Ansible Vault (`vault.yml`, variables `vault_*`) ; en CI via les variables GitLab masquées (lues par `lookup('env')`). `no_log` sur les tâches sensibles.
 
 ```bash
@@ -356,7 +369,7 @@ ansible-playbook playbook.yml --tags prepare
 
 ### 11.5 Docker Compose et migrations (§5.2)
 
-Services `db` (PostgreSQL 16, volume `pgdata`, healthcheck), `migrate` (`prisma migrate deploy`, exécuté une fois avant l'API ; l'image de production n'embarque pas la CLI Prisma) et `api` (image Docker Hub, healthcheck, `restart: unless-stopped`). Limite : un rollback d'image n'annule pas les migrations de schéma déjà appliquées (§5.4).
+Services `db` (PostgreSQL 16, volume `pgdata`, healthcheck), `migrate` (`prisma migrate deploy`, exécuté une fois avant l'API ; l'image de production n'embarque pas la CLI Prisma) et `api` (image Docker Hub, healthcheck, `restart: unless-stopped`). Limite : un rollback d'image n'annule pas les migrations de schéma déjà appliquées ; les règles de conception des migrations qui en découlent sont détaillées dans [`procedure-rollback.md`](procedure-rollback.md) (§5.4).
 
 ### 11.6 GitLab CI/CD (§4.4 et §5.3)
 
@@ -364,12 +377,80 @@ Le fichier `.gitlab-ci.yml` ne reconstruit pas l'image. Stages :
 
 1. `validate:tag` : tag non vide, ≠ `latest`, format `X.Y.Z-<commit>`, existence sur Docker Hub, `--syntax-check` Ansible, ping SSH.
 2. `deploy:production` : **manuel** (approbation), `resource_group` pour éviter les déploiements concurrents ; exécute `playbook.yml --tags prepare` puis `deploy.yml`.
-3. `verify:production` : `docker compose ps` et `curl /v1/health` sur le serveur.
-4. `rollback:production` : manuel, avec `ROLLBACK_TAG`.
+3. `verify:production` : `docker compose ps` puis le smoke test complet (`scripts/smoke-test.sh`).
+4. `rollback:auto` : `when: on_failure`, se déclenche si le déploiement ou le smoke test a échoué ; redéploie la dernière version saine.
+5. `rollback:manual` : manuel, avec `ROLLBACK_TAG`, vers une version choisie.
 
-Variables CI/CD à créer (masquées, `SSH_PRIVATE_KEY` de type File) : `DOCKERHUB_USER`, `DOCKERHUB_TOKEN`, `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `POSTGRES_PASSWORD`, `JWT_SECRET`, `FRONTEND_URL`, `IMAGE_TAG`. Un seul serveur est disponible : pas d'environnement de staging distinct.
+Variables CI/CD à créer (masquées, `SSH_PRIVATE_KEY` de type File) : `DOCKERHUB_USER`, `DOCKERHUB_TOKEN`, `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `POSTGRES_PASSWORD`, `JWT_SECRET`, `FRONTEND_URL`, `IMAGE_TAG`, et facultativement `ROLLBACK_WEBHOOK_URL`. Un seul serveur est disponible : pas d'environnement de staging distinct.
 
-### 11.7 État d'avancement
+### 11.7 Vérification et retour arrière (§5.4)
+
+Le cours (jour 2, « Post-déploiement : rollback automatisé ») fixe quatre règles :
+conserver le tag de la version précédente, vérifier le déploiement par un smoke test,
+rejouer le déploiement sur la version précédente en cas d'échec, documenter le runbook
+et notifier. Elles sont implémentées comme suit ; le runbook complet est dans
+[`procedure-rollback.md`](procedure-rollback.md).
+
+**Conserver la version précédente.** Deux fichiers d'état dans `/opt/souverainrecrut`,
+écrits par Ansible : `.deployed_tag` (version en service) et `.previous_tag` (dernière
+version saine avant celle-ci). `.previous_tag` n'est pas réécrit pendant un rollback,
+sinon la version défaillante deviendrait la cible du retour arrière suivant. Sur un
+serveur déjà déployé avant la mise en place de ce suivi, la version en service est
+retrouvée dans le `IMAGE_TAG` du `.env`.
+
+**Smoke test.** `deploiement/scripts/smoke-test.sh [tag]` enchaîne six contrôles et sort
+en code 1 au premier échec :
+
+| # | Contrôle | Exigence §5.4 couverte |
+|---|---|---|
+| 1 | Conteneurs `api` et `db` démarrés | Accessibilité du service |
+| 2 | `GET /v1/health` = 200, `status: UP` | Accessibilité de l'API |
+| 3 | `GET /v1/ready` = 200 | Communication Backend ↔ PostgreSQL (503 si Prisma ne joint pas la base) |
+| 4 | `select count(*) from _prisma_migrations` > 0 | Persistance des données dans le volume `pgdata` |
+| 5 | `GET /v1/users` = 401 | Endpoints principaux protégés |
+| 6 | `IMAGE_TAG` du `.env` = tag attendu | Traçabilité de la version déployée |
+
+Le script fonctionne en SSH depuis le runner GitLab (`SSH_HOST`, `SSH_USER`,
+`SSH_PRIVATE_KEY`) ou en local sur le serveur si ces variables sont absentes.
+
+**Retour arrière.** Trois niveaux, du plus automatique au plus manuel :
+
+| Niveau | Déclencheur | Mécanisme | Délai |
+|---|---|---|---|
+| 1 | `/v1/health` KO pendant le déploiement | `block` / `rescue` du rôle `app_deploy` : la version de repli est redéployée, puis le playbook échoue | ~1 min |
+| 2 | Smoke test KO après le déploiement | Job `rollback:auto` (`when: on_failure`) → `scripts/rollback.sh` sans argument | durée d'un job CI |
+| 3 | Décision humaine | Job manuel `rollback:manual` avec `ROLLBACK_TAG`, ou `./scripts/rollback.sh <tag>` | à la demande |
+
+Dans les trois cas, le retour arrière consiste à rejouer `deploy.yml` avec le tag
+antérieur et `rollback=true` : rien n'est reconstruit, l'image redéployée est exactement
+celle qui avait été testée et publiée par Jenkins. `rollback.sh` refuse un tag vide,
+`latest`, un format non conforme, un tag absent de Docker Hub ou égal à la version déjà
+en service, puis revalide le service par le smoke test.
+
+Le niveau 1 rétablit le service **et** fait échouer le playbook : le pipeline reste rouge
+pour que l'incident soit visible, alors que l'API est déjà revenue à la version
+précédente. S'il n'existe aucune version de repli (premier déploiement), aucun rollback
+n'est tenté et le message d'erreur renvoie vers le runbook.
+
+**Notification.** `rollback.sh` affiche l'engagement et la fin du retour arrière, et poste
+le message sur `ROLLBACK_WEBHOOK_URL` si cette variable CI/CD est définie. Son absence
+n'interrompt pas le rollback.
+
+**Écart assumé par rapport au cours.** Le cours illustre le déclenchement par un
+`post { failure { … } }` Jenkins. Ici Jenkins ne déploie pas — il construit et publie
+l'image — et le déploiement est porté par GitLab CI : le déclenchement sur échec est donc
+réalisé par `when: on_failure`, son équivalent GitLab. De même, le cours recommande de
+tester la procédure en staging ; un seul serveur étant disponible, le scénario de test
+décrit au §8 du runbook s'exécute sur l'environnement de production.
+
+**Limite structurelle.** Le retour arrière porte sur l'image applicative, pas sur le schéma
+de base. `prisma migrate deploy` est rejoué avant chaque démarrage mais les migrations ne
+sont pas annulées : revenir à l'image `N-1` laisse la base au schéma `N`. Le rollback
+n'est sûr que si les migrations sont rétrocompatibles (colonnes nullables, pas de
+suppression ni de renommage immédiat) ; sinon il faut restaurer une sauvegarde — qui
+n'est pas automatisée sur ce VPS de formation. C'est la principale limite de la chaîne.
+
+### 11.8 État d'avancement
 
 | Élément | État |
 |---|---|
@@ -381,18 +462,22 @@ Variables CI/CD à créer (masquées, `SSH_PRIVATE_KEY` de type File) : `DOCKERH
 | `deploy.yml` : image `00h37/souverainrecrut-backend:1.0.0-f1f3177` déployée, `db` et `api` *healthy*, migration Prisma appliquée, `/v1/health` et `/v1/ready` = 200, endpoints protégés = 401 | Fait |
 | Projet GitLab privé `leo.bessin/souverainrecrut-deploiement`, variables CI/CD créées, `validate:tag` au vert | Fait |
 | Job `deploy:production` (approbation manuelle) et `verify:production` au vert | Fait |
-| Rollback testé (nécessite une 2e image publiée) | À faire |
-| Procédure de rollback testée | À faire |
+| Système de rollback implémenté (état des versions, `rescue` Ansible, `rollback:auto`, scripts) | Fait |
+| Smoke test écrit (6 contrôles : API, PostgreSQL, persistance, auth, tag) | Fait |
+| Runbook de retour arrière rédigé (`docs/procedure-rollback.md`) | Fait |
+| Livrables documentaires du §6 (architecture, procédure de déploiement, rapport final, README du dossier `deploiement/`) | Fait |
+| Rapports joints au dépôt (`reports/` : couverture, lcov, Trivy) | Fait |
+| Rollback exécuté sur un scénario réel (nécessite une 2e image publiée sur Docker Hub) | À faire |
 
-### 11.8 Déploiement réalisé (10/11/2026)
+### 11.9 Déploiement réalisé (10/11/2026)
 
 Déploiement manuel depuis le poste, avec les secrets applicatifs générés aléatoirement et conservés dans `ansible/.deploy-secrets.env` (hors Git), injectés par variables d'environnement. Le dépôt Docker Hub étant public, la connexion Docker Hub est conditionnelle au jeton (`dockerhub_token`). Deux correctifs issus du premier run : le `.env`, `docker-compose.yml` et `prisma/` appartiennent à l'utilisateur `deploy` (sinon `docker compose ps` échouait en CI). Le port 4000 est publié sur toutes les interfaces : à restreindre (pare-feu ou reverse proxy TLS) pour un usage réel.
 
-### 11.9 Projet GitLab
+### 11.10 Projet GitLab
 
 Projet privé [souverainrecrut-deploiement](https://gitlab.com/leo.bessin/souverainrecrut-deploiement) créé avec `glab`, branche `Dev` du dépôt GitHub poussée vers `main` (remote `gitlab`). Le dépôt GitHub reste la source du code ; GitLab porte le pipeline de déploiement. Variables : `SSH_PRIVATE_KEY` (type File), `POSTGRES_PASSWORD` et `JWT_SECRET` (masquées), `SSH_HOST`, `SSH_USER`, `DOCKERHUB_USER`, `FRONTEND_URL`, `IMAGE_TAG`. Elles ne sont pas « protected » car `main` n'est pas protégée ; à activer avec la protection de branche pour un usage réel. Piège rencontré : une variable File sans retour à la ligne final fait échouer OpenSSH (`error in libcrypto`) ; la clé a été renvoyée via l'API avec son `\n` final.
 
-### 11.10 Preuves d'exécution (10/11/2026)
+### 11.11 Preuves d'exécution (10/11/2026)
 
 **Terraform** – premier `plan`/`apply` (extraits), puis `plan` de contrôle :
 
@@ -494,7 +579,7 @@ ready HTTP 200
 HTTP 401
 ```
 
-**GitLab CI** – pipeline : `validate:tag` ✔ → `deploy:production` (manuel) ✔ → `verify:production` ✔ ; `rollback:production` disponible (manuel).
+**GitLab CI** – pipeline : `validate:tag` ✔ → `deploy:production` (manuel) ✔ → `verify:production` ✔ ; `rollback:auto` (sur échec) et `rollback:manual` (avec `ROLLBACK_TAG`) disponibles. Le pipeline du 10/11 a été exécuté avant l'ajout du smoke test complet : il validait `docker compose ps` et `/v1/health`.
 
 **Captures GitLab** :
 
