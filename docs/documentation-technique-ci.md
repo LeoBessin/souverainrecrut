@@ -377,12 +377,17 @@ Variables CI/CD à créer (masquées, `SSH_PRIVATE_KEY` de type File) : `DOCKERH
 | `terraform apply` sur le VPS (Debian 12, 4 ressources créées : utilisateur `deploy`, clé SSH, inventaire) | Fait |
 | `playbook.yml --tags prepare` sur le VPS (1re exécution `changed=4`, 2e exécution `changed=0` : idempotent) | Fait |
 | `deploy.yml` : image `00h37/souverainrecrut-backend:1.0.0-f1f3177` déployée, `db` et `api` *healthy*, migration Prisma appliquée, `/v1/health` et `/v1/ready` = 200, endpoints protégés = 401 | Fait |
-| Run GitLab, rollback testé | À faire |
+| Projet GitLab privé `leo.bessin/souverainrecrut-deploiement`, variables CI/CD créées, `validate:tag` au vert | Fait |
+| Job `deploy:production` (approbation manuelle), rollback testé | À faire |
 | Procédure de rollback testée | À faire |
 
 ### 11.8 Déploiement réalisé (10/11/2026)
 
 Déploiement manuel depuis le poste, avec les secrets applicatifs générés aléatoirement et conservés dans `ansible/.deploy-secrets.env` (hors Git), injectés par variables d'environnement. Le dépôt Docker Hub étant public, la connexion Docker Hub est conditionnelle au jeton (`dockerhub_token`). Deux correctifs issus du premier run : le `.env`, `docker-compose.yml` et `prisma/` appartiennent à l'utilisateur `deploy` (sinon `docker compose ps` échouait en CI). Le port 4000 est publié sur toutes les interfaces : à restreindre (pare-feu ou reverse proxy TLS) pour un usage réel.
+
+### 11.9 Projet GitLab
+
+Projet privé créé avec `glab`, branche `Dev` poussée vers `main` (remote `gitlab`). Variables : `SSH_PRIVATE_KEY` (type File), `POSTGRES_PASSWORD` et `JWT_SECRET` (masquées), `SSH_HOST`, `SSH_USER`, `DOCKERHUB_USER`, `FRONTEND_URL`, `IMAGE_TAG`. Elles ne sont pas « protected » car `main` n'est pas protégée ; à activer avec la protection de branche pour un usage réel. Piège rencontré : une variable File sans retour à la ligne final fait échouer OpenSSH (`error in libcrypto`) ; la clé a été renvoyée via l'API avec son `\n` final.
 
 ### Captures à fournir (journée 2)
 
