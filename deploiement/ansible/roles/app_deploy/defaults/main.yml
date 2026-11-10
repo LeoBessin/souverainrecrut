@@ -1,0 +1,9 @@
+# Retour arrière : passé à true par deploiement/scripts/rollback.sh et par le job
+# rollback de GitLab CI. Dans ce mode, .previous_tag n'est pas réécrit (la version
+# saine doit rester la cible d'un éventuel second retour) et l'échec n'entraîne pas
+# de nouveau rollback automatique.
+rollback: false
+
+# Attente de l'API après démarrage : 15 tentatives espacées de 4 s (1 minute).
+health_retries: 15
+health_delay: 4

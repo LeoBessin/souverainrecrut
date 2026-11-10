@@ -5,6 +5,51 @@
       - image_tag != 'latest'
     fail_msg: "Fournir -e image_tag=<version>-<commit>"
 
+# --- État des versions, lu avant toute modification (cahier des charges §5.4) ---
+# .deployed_tag : version actuellement en service
+# .previous_tag : dernière version saine connue avant celle en service
+
+- name: Lire la version actuellement déployée
+  ansible.builtin.slurp:
+    src: "{{ deploy_dir }}/.deployed_tag"
+  register: deployed_tag_file
+  failed_when: false
+  changed_when: false
+
+- name: Lire la dernière version saine mémorisée
+  ansible.builtin.slurp:
+    src: "{{ deploy_dir }}/.previous_tag"
+  register: previous_tag_file
+  failed_when: false
+  changed_when: false
+
+# Serveur déployé avant la mise en place du suivi de version : on retrouve la
+# version en service dans le .env généré au déploiement précédent.
+- name: Récupérer la version en service depuis le .env (reprise d'historique)
+  ansible.builtin.shell: "grep -m1 '^IMAGE_TAG=' {{ deploy_dir }}/.env | cut -d= -f2"
+  register: env_tag
+  failed_when: false
+  changed_when: false
+  when: deployed_tag_file.content is not defined
+
+- name: Déterminer la version courante et la version de repli
+  ansible.builtin.set_fact:
+    current_tag: "{{ (deployed_tag_file.content | b64decode | trim) if deployed_tag_file.content is defined else (env_tag.stdout | default('') | trim) }}"
+    saved_previous_tag: "{{ (previous_tag_file.content | b64decode | trim) if previous_tag_file.content is defined else '' }}"
+
+# La version en service est la meilleure cible de repli : elle tourne et elle a
+# été validée. Si on redéploie la même version, on remonte d'un cran.
+- name: Choisir la cible du retour arrière automatique
+  ansible.builtin.set_fact:
+    rollback_target: "{{ current_tag if (current_tag | length > 0 and current_tag != image_tag) else saved_previous_tag }}"
+
+- name: Annoncer la version déployée
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Retour arrière vers' if rollback | bool else 'Déploiement de' }} {{ image_tag }}
+      (version en service : {{ current_tag | default('aucune', true) }},
+      repli automatique : {{ rollback_target | default('aucun', true) }})
+
 - name: Copier docker-compose.yml
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../deployment/docker-compose.yml"
@@ -18,18 +63,6 @@
     dest: "{{ deploy_dir }}/prisma/"
     owner: "{{ ansible_user }}"
     mode: preserve
-
-- name: Mémoriser le tag précédent pour le rollback
-  ansible.builtin.shell: "grep '^IMAGE_TAG=' {{ deploy_dir }}/.env | cut -d= -f2 > {{ deploy_dir }}/.previous_tag || true"
-  changed_when: false
-
-- name: Générer le .env (secrets issus du Vault)
-  ansible.builtin.template:
-    src: env.j2
-    dest: "{{ deploy_dir }}/.env"
-    owner: "{{ ansible_user }}"
-    mode: "0600"
-  no_log: true
 
 - name: Vérifier que les secrets sont fournis
   ansible.builtin.assert:
@@ -47,21 +80,64 @@
   when: dockerhub_token | length > 0
   no_log: true
 
-- name: Tirer l'image et démarrer les services
-  community.docker.docker_compose_v2:
-    project_src: "{{ deploy_dir }}"
-    pull: always
-    state: present
-    remove_orphans: true
+# --- Déploiement avec retour arrière automatique (cours jour 2) ---
+# Si la nouvelle version ne répond pas sur /health, la version de repli est
+# redéployée immédiatement, puis le playbook échoue pour que la CI le signale.
 
-- name: Attendre que l'API réponde
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ api_port }}/{{ api_version }}/health"
-    status_code: 200
-  register: health
-  retries: 15
-  delay: 4
-  until: health.status == 200
+- name: Déployer la version demandée
+  block:
+    - name: Appliquer la version {{ image_tag }}
+      ansible.builtin.include_tasks: apply.yml
+
+  rescue:
+    - name: Refuser le retour arrière automatique s'il n'y a pas de repli
+      ansible.builtin.fail:
+        msg: >-
+          Déploiement de {{ image_tag }} en échec et aucun retour arrière automatique possible
+          ({{ 'opération déjà en cours de rollback' if rollback | bool else 'aucune version antérieure connue' }}).
+          Intervention manuelle requise : voir docs/procedure-rollback.md.
+      when: rollback | bool or rollback_target | length == 0
+
+    - name: Mémoriser la version en échec
+      ansible.builtin.set_fact:
+        failed_tag: "{{ image_tag }}"
+
+    - name: Basculer sur la version de repli
+      ansible.builtin.set_fact:
+        image_tag: "{{ rollback_target }}"
+
+    - name: "Retour arrière automatique vers {{ rollback_target }}"
+      ansible.builtin.include_tasks: apply.yml
+
+    # Le retour arrière a réussi : le service est rétabli, mais le déploiement
+    # reste un échec. La CI doit afficher rouge et l'équipe doit être prévenue.
+    - name: Signaler l'échec du déploiement malgré le service rétabli
+      ansible.builtin.fail:
+        msg: >-
+          Version {{ failed_tag }} en échec sur /health : retour arrière automatique
+          vers {{ rollback_target }} effectué, le service est de nouveau disponible.
+
+# --- Mémorisation de l'état, uniquement après un déploiement réussi ---
+
+- name: Mémoriser la version déployée
+  ansible.builtin.copy:
+    content: "{{ image_tag }}\n"
+    dest: "{{ deploy_dir }}/.deployed_tag"
+    owner: "{{ ansible_user }}"
+    mode: "0640"
+
+# En rollback, .previous_tag n'est pas touché : la version saine doit rester la
+# cible d'un second retour arrière.
+- name: Mémoriser la version précédente comme point de retour
+  ansible.builtin.copy:
+    content: "{{ current_tag }}\n"
+    dest: "{{ deploy_dir }}/.previous_tag"
+    owner: "{{ ansible_user }}"
+    mode: "0640"
+  when:
+    - not (rollback | bool)
+    - current_tag | length > 0
+    - current_tag != image_tag
 
 - name: Afficher l'état des conteneurs
   ansible.builtin.command: docker compose ps

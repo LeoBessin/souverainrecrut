@@ -8,8 +8,9 @@
 #   POSTGRES_PASSWORD, JWT_SECRET     secrets applicatifs
 #   FRONTEND_URL                      origine autorisée par le CORS
 #   IMAGE_TAG                         tag à déployer, ex. 0.1.0-abc1234 (à saisir au lancement)
+#   ROLLBACK_WEBHOOK_URL              (facultatif) notification en cas de retour arrière
 
-stages: [validate, deploy, verify]
+stages: [validate, deploy, verify, rollback]
 
 default:
   image: python:3.12-alpine
@@ -24,6 +25,7 @@ default:
 variables:
   ANSIBLE_FORCE_COLOR: "true"
   ANSIBLE_HOST_KEY_CHECKING: "False"
+  INVENTORY: /tmp/hosts.ini
 
 validate:tag:
   stage: validate
@@ -49,23 +51,38 @@ deploy:production:
     - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/playbook.yml --tags prepare
     - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/deploy.yml -e image_tag="$IMAGE_TAG"
 
+# Smoke test : API, liaison PostgreSQL, persistance, endpoints protégés, tag déployé.
+# Son échec déclenche rollback:auto (§5.4).
 verify:production:
   stage: verify
   needs: [deploy:production]
   script:
     - ssh -i "$SSH_PRIVATE_KEY" "$SSH_USER@$SSH_HOST" "cd /opt/souverainrecrut && docker compose ps"
-    - ssh -i "$SSH_PRIVATE_KEY" "$SSH_USER@$SSH_HOST" "curl -fsS http://127.0.0.1:4000/v1/health"
+    - deploiement/scripts/smoke-test.sh "$IMAGE_TAG"
 
-# Retour arrière : relancer avec ROLLBACK_TAG=<tag précédent> (voir docs, procédure de rollback)
-rollback:production:
-  stage: deploy
+# Retour arrière automatique : se déclenche si un job précédent du pipeline a
+# échoué (déploiement ou smoke test). Sans argument, le script redéploie la
+# dernière version saine mémorisée sur le serveur (.previous_tag).
+rollback:auto:
+  stage: rollback
+  environment:
+    name: production
+  when: on_failure
+  resource_group: production
+  script:
+    - deploiement/scripts/rollback.sh
+
+# Retour arrière manuel vers une version choisie (runbook docs/procedure-rollback.md).
+rollback:manual:
+  stage: rollback
   environment:
     name: production
   when: manual
+  allow_failure: true
   resource_group: production
   needs: []
   variables:
     ROLLBACK_TAG: ""
   script:
     - test -n "$ROLLBACK_TAG" || { echo "Renseigner ROLLBACK_TAG"; exit 1; }
-    - ansible-playbook -i /tmp/hosts.ini deploiement/ansible/deploy.yml -e image_tag="$ROLLBACK_TAG"
+    - deploiement/scripts/rollback.sh "$ROLLBACK_TAG"

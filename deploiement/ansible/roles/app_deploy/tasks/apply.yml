@@ -1,0 +1,27 @@
+# Application d'une version donnée (image_tag). Ce fichier est inclus deux fois :
+# une première fois pour la version demandée, une seconde fois par le bloc rescue
+# de main.yml pour la version de repli lors d'un retour arrière automatique.
+
+- name: "Générer le .env pour la version {{ image_tag }} (secrets issus du Vault)"
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ deploy_dir }}/.env"
+    owner: "{{ ansible_user }}"
+    mode: "0600"
+  no_log: true
+
+- name: "Tirer l'image {{ image_name }}:{{ image_tag }} et démarrer les services"
+  community.docker.docker_compose_v2:
+    project_src: "{{ deploy_dir }}"
+    pull: always
+    state: present
+    remove_orphans: true
+
+- name: Attendre que l'API réponde
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ api_port }}/{{ api_version }}/health"
+    status_code: 200
+  register: health
+  retries: "{{ health_retries }}"
+  delay: "{{ health_delay }}"
+  until: health.status == 200
